@@ -69,25 +69,7 @@ class TransactionTile extends StatelessWidget {
         ),
         child: const Icon(Icons.delete, color: Colors.white),
       ),
-      confirmDismiss: (_) async {
-        return await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Xác nhận xóa'),
-            content: const Text('Bạn có chắc muốn xóa giao dịch này?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Hủy'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Xóa', style: TextStyle(color: Colors.red)),
-              ),
-            ],
-          ),
-        );
-      },
+      // No confirmDismiss – undo via SnackBar in HomeScreen
       onDismissed: (_) => onDelete?.call(),
       child: Card(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

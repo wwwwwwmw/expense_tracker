@@ -1,21 +1,42 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart';
 import '../models/transaction.dart';
-import '../viewmodels/transaction_viewmodel.dart';
+import '../providers/transaction_providers.dart';
 
-class AddTransactionScreen extends StatefulWidget {
+/// Formats digits with thousand-separator commas for VNĐ display.
+class _VndInputFormatter extends TextInputFormatter {
+  static final _formatter =
+      NumberFormat.decimalPattern('vi_VN');
+
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    if (newValue.text.isEmpty) return newValue;
+    final digits = newValue.text.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) return const TextEditingValue();
+    final number = int.parse(digits);
+    final formatted = _formatter.format(number);
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
+  }
+}
+
+class AddTransactionScreen extends ConsumerStatefulWidget {
   final Transaction? existingTransaction;
 
   const AddTransactionScreen({super.key, this.existingTransaction});
 
   @override
-  State<AddTransactionScreen> createState() => _AddTransactionScreenState();
+  ConsumerState<AddTransactionScreen> createState() =>
+      _AddTransactionScreenState();
 }
 
-class _AddTransactionScreenState extends State<AddTransactionScreen> {
+class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
   final _formKey = GlobalKey<FormState>();
   final _amountController = TextEditingController();
   final _noteController = TextEditingController();
@@ -25,6 +46,13 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
   DateTime _selectedDate = DateTime.now();
 
   bool get isEditing => widget.existingTransaction != null;
+
+  /// Whether the form is currently valid (controls Save button).
+  bool get _isValid {
+    final raw = _amountController.text.replaceAll(RegExp(r'[^0-9]'), '');
+    final amount = double.tryParse(raw);
+    return amount != null && amount > 0 && _category != null;
+  }
 
   static const List<String> expenseCategories = [
     'Food',
@@ -53,16 +81,22 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     super.initState();
     if (isEditing) {
       final t = widget.existingTransaction!;
-      _amountController.text = t.amount.toStringAsFixed(0);
+      // Pre-format the amount with VND thousands separator
+      _amountController.text =
+          NumberFormat.decimalPattern('vi_VN').format(t.amount.toInt());
       _noteController.text = t.note;
       _type = t.type;
       _category = t.category;
       _selectedDate = t.date;
     }
+    _amountController.addListener(_onFormChanged);
   }
+
+  void _onFormChanged() => setState(() {});
 
   @override
   void dispose() {
+    _amountController.removeListener(_onFormChanged);
     _amountController.dispose();
     _noteController.dispose();
     super.dispose();
@@ -89,10 +123,12 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       return;
     }
 
-    final vm = context.read<TransactionViewModel>();
+    final repo = ref.read(transactionRepositoryProvider);
+    final rawDigits =
+        _amountController.text.replaceAll(RegExp(r'[^0-9]'), '');
     final transaction = Transaction(
       id: isEditing ? widget.existingTransaction!.id : const Uuid().v4(),
-      amount: double.parse(_amountController.text.replaceAll(',', '')),
+      amount: double.parse(rawDigits),
       type: _type,
       category: _category!,
       date: _selectedDate,
@@ -100,9 +136,9 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     );
 
     if (isEditing) {
-      vm.updateTransaction(transaction);
+      repo.update(transaction);
     } else {
-      vm.addTransaction(transaction);
+      repo.add(transaction);
     }
 
     Navigator.of(context).pop();
@@ -142,7 +178,6 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 onSelectionChanged: (selected) {
                   setState(() {
                     _type = selected.first;
-                    // Reset category when type changes
                     if (_category != null &&
                         !currentCategories.contains(_category)) {
                       _category = null;
@@ -163,12 +198,13 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
 
               const SizedBox(height: 20),
 
-              // Amount field
+              // Amount field with realtime VNĐ formatting
               TextFormField(
                 controller: _amountController,
                 decoration: InputDecoration(
                   labelText: 'Số tiền (VNĐ)',
                   prefixIcon: const Icon(Icons.attach_money),
+                  suffixText: 'đ',
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -177,12 +213,14 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
                 keyboardType: TextInputType.number,
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
+                  _VndInputFormatter(),
                 ],
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'Vui lòng nhập số tiền';
                   }
-                  final amount = double.tryParse(value.replaceAll(',', ''));
+                  final raw = value.replaceAll(RegExp(r'[^0-9]'), '');
+                  final amount = double.tryParse(raw);
                   if (amount == null || amount <= 0) {
                     return 'Số tiền không hợp lệ';
                   }
@@ -254,9 +292,9 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
 
               const SizedBox(height: 24),
 
-              // Submit button
+              // Submit button – disabled when form invalid
               FilledButton.icon(
-                onPressed: _submit,
+                onPressed: _isValid ? _submit : null,
                 icon: Icon(isEditing ? Icons.save : Icons.add),
                 label: Text(
                   isEditing ? 'Cập nhật' : 'Thêm giao dịch',
